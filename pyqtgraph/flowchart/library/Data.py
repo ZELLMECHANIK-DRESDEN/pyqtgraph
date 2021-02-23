@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 from ..Node import Node
-from ...Qt import QtGui, QtCore
+from ...Qt import QtGui, QtCore, QtWidgets
 import numpy as np
+import sys
 from .common import *
 from ...SRTTransform import SRTTransform
 from ...Point import Point
@@ -172,6 +173,20 @@ class RegionSelectNode(CtrlNode):
         self.update()
         
         
+class TextEdit(QtWidgets.QTextEdit):
+    def __init__(self, on_update):
+        super().__init__()
+        self.on_update = on_update
+        self.lastText = None
+
+    def focusOutEvent(self, ev):
+        text = str(self.toPlainText())
+        if text != self.lastText:
+            self.lastText = text
+            self.on_update()
+        super().focusOutEvent(ev)
+
+
 class EvalNode(Node):
     """Return the output of a string evaluated/executed by the python interpreter.
     The string may be either an expression or a python script, and inputs are accessed as the name of the terminal. 
@@ -189,38 +204,33 @@ class EvalNode(Node):
         
         self.ui = QtGui.QWidget()
         self.layout = QtGui.QGridLayout()
-        #self.addInBtn = QtGui.QPushButton('+Input')
-        #self.addOutBtn = QtGui.QPushButton('+Output')
-        self.text = QtGui.QTextEdit()
+        self.text = TextEdit(self.update)
         self.text.setTabStopWidth(30)
         self.text.setPlainText("# Access inputs as args['input_name']\nreturn {'output': None} ## one key per output terminal")
-        #self.layout.addWidget(self.addInBtn, 0, 0)
-        #self.layout.addWidget(self.addOutBtn, 0, 1)
         self.layout.addWidget(self.text, 1, 0, 1, 2)
         self.ui.setLayout(self.layout)
-        
-        #QtCore.QObject.connect(self.addInBtn, QtCore.SIGNAL('clicked()'), self.addInput)
-        #self.addInBtn.clicked.connect(self.addInput)
-        #QtCore.QObject.connect(self.addOutBtn, QtCore.SIGNAL('clicked()'), self.addOutput)
-        #self.addOutBtn.clicked.connect(self.addOutput)
-        self.text.focusOutEvent = self.focusOutEvent
-        self.lastText = None
         
     def ctrlWidget(self):
         return self.ui
         
-    #def addInput(self):
-        #Node.addInput(self, 'input', renamable=True)
+    def setCode(self, code):
+        # unindent code; this allows nicer inline code specification when 
+        # calling this method.
+        ind = []
+        lines = code.split('\n')
+        for line in lines:
+            stripped = line.lstrip()
+            if len(stripped) > 0:
+                ind.append(len(line) - len(stripped))
+        if len(ind) > 0:
+            ind = min(ind)
+            code = '\n'.join([line[ind:] for line in lines])
         
-    #def addOutput(self):
-        #Node.addOutput(self, 'output', renamable=True)
-        
-    def focusOutEvent(self, ev):
-        text = str(self.text.toPlainText())
-        if text != self.lastText:
-            self.lastText = text
-            self.update()
-        return QtGui.QTextEdit.focusOutEvent(self.text, ev)
+        self.text.clear()
+        self.text.insertPlainText(code)
+
+    def code(self):
+        return self.text.toPlainText()
         
     def process(self, display=True, **args):
         l = locals()
@@ -233,7 +243,12 @@ class EvalNode(Node):
             fn = "def fn(**args):\n"
             run = "\noutput=fn(**args)\n"
             text = fn + "\n".join(["    "+l for l in str(self.text.toPlainText()).split('\n')]) + run
-            exec(text)
+            if sys.version_info.major == 2:
+                exec(text)
+            elif sys.version_info.major == 3:
+                ldict = locals()
+                exec(text, globals(), ldict)
+                output = ldict['output']
         except:
             print("Error processing node: %s" % self.name())
             raise
@@ -247,10 +262,10 @@ class EvalNode(Node):
         
     def restoreState(self, state):
         Node.restoreState(self, state)
-        self.text.clear()
-        self.text.insertPlainText(state['text'])
+        self.setCode(state['text'])
         self.restoreTerminals(state['terminals'])
         self.update()
+
         
 class ColumnJoinNode(Node):
     """Concatenates record arrays and/or adds new columns"""
@@ -354,3 +369,117 @@ class ColumnJoinNode(Node):
         self.update()
         
         
+class Mean(CtrlNode):
+    """Calculate the mean of an array across an axis.
+    """
+    nodeName = 'Mean'
+    uiTemplate = [
+        ('axis', 'intSpin', {'value': 0, 'min': -1, 'max': 1000000}),
+    ]
+    
+    def processData(self, data):
+        s = self.stateGroup.state()
+        ax = None if s['axis'] == -1 else s['axis']
+        return data.mean(axis=ax)
+
+
+class Max(CtrlNode):
+    """Calculate the maximum of an array across an axis.
+    """
+    nodeName = 'Max'
+    uiTemplate = [
+        ('axis', 'intSpin', {'value': 0, 'min': -1, 'max': 1000000}),
+    ]
+    
+    def processData(self, data):
+        s = self.stateGroup.state()
+        ax = None if s['axis'] == -1 else s['axis']
+        return data.max(axis=ax)
+
+
+class Min(CtrlNode):
+    """Calculate the minimum of an array across an axis.
+    """
+    nodeName = 'Min'
+    uiTemplate = [
+        ('axis', 'intSpin', {'value': 0, 'min': -1, 'max': 1000000}),
+    ]
+    
+    def processData(self, data):
+        s = self.stateGroup.state()
+        ax = None if s['axis'] == -1 else s['axis']
+        return data.min(axis=ax)
+
+
+class Stdev(CtrlNode):
+    """Calculate the standard deviation of an array across an axis.
+    """
+    nodeName = 'Stdev'
+    uiTemplate = [
+        ('axis', 'intSpin', {'value': -0, 'min': -1, 'max': 1000000}),
+    ]
+    
+    def processData(self, data):
+        s = self.stateGroup.state()
+        ax = None if s['axis'] == -1 else s['axis']
+        return data.std(axis=ax)
+
+
+class Index(CtrlNode):
+    """Select an index from an array axis.
+    """
+    nodeName = 'Index'
+    uiTemplate = [
+        ('axis', 'intSpin', {'value': 0, 'min': 0, 'max': 1000000}),
+        ('index', 'intSpin', {'value': 0, 'min': 0, 'max': 1000000}),
+    ]
+    
+    def processData(self, data):
+        s = self.stateGroup.state()
+        ax = s['axis']
+        ind = s['index']
+        if ax == 0:
+            # allow support for non-ndarray sequence types
+            return data[ind]
+        else:
+            return data.take(ind, axis=ax)
+        
+
+class Slice(CtrlNode):
+    """Select a slice from an array axis.
+    """
+    nodeName = 'Slice'
+    uiTemplate = [
+        ('axis', 'intSpin', {'value': 0, 'min': 0, 'max': 1e6}),
+        ('start', 'intSpin', {'value': 0, 'min': -1e6, 'max': 1e6}),
+        ('stop', 'intSpin', {'value': -1, 'min': -1e6, 'max': 1e6}),
+        ('step', 'intSpin', {'value': 1, 'min': -1e6, 'max': 1e6}),
+    ]
+    
+    def processData(self, data):
+        s = self.stateGroup.state()
+        ax = s['axis']
+        start = s['start']
+        stop = s['stop']
+        step = s['step']
+        if ax == 0:
+            # allow support for non-ndarray sequence types
+            return data[start:stop:step]
+        else:
+            sl = [slice(None) for i in range(data.ndim)]
+            sl[ax] = slice(start, stop, step)
+            return data[sl]
+        
+
+class AsType(CtrlNode):
+    """Convert an array to a different dtype.
+    """
+    nodeName = 'AsType'
+    uiTemplate = [
+        ('dtype', 'combo', {'values': ['float', 'int', 'float32', 'float64', 'float128', 'int8', 'int16', 'int32', 'int64', 'uint8', 'uint16', 'uint32', 'uint64'], 'index': 0}),
+    ]
+    
+    def processData(self, data):
+        s = self.stateGroup.state()
+        return data.astype(s['dtype'])
+
